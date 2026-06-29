@@ -13,7 +13,26 @@ version of "never let the LLM invent the math."
 
 ---
 
-## 0. What the simulation emits (the output contract)
+## 0. What the simulation is *for* (and what it emits)
+
+**The sim is a combinatorial pre-screener, not a calibrated predictor.** Its job is to
+take a candidate space too large, too slow, and too irreversible to test live — dozens of
+(segment × creative × channel × offer × price) combinations — and rank it so the scarce
+real-test budget is spent only on the top-k. The live LINE test *confirms* 2–3 finalists;
+the sim is what lets you *explore* 40.
+
+This changes the bar the sim must clear. **It needs the ranking right, not the magnitude.**
+You do not need a calibrated `τ`; you need "the real winner is in the sim's top-k." That is
+exactly what `Hit@k` / RankCorr measure, and — crucially — **ordinal signal survives far
+smaller samples than magnitude does.** The wide-CI / power problem is an objection to
+*magnitude* validation; it largely does not bind on *ranking* validation. So the headline
+metric is `Hit@k` and `RankCorr`, and `τ` magnitude / calibration β is demoted to an
+**internal gate** (does pricing get to claim depth?), never the thing you sell.
+
+> One asymmetric failure this introduces: if the sim wrongly *kills the true winner* before
+> it reaches a live test, you never find out — you only ever validate survivors. Mitigate
+> with a **wildcard arm** (§6): always push one sim-rejected candidate to the live test. If
+> the wildcard keeps winning, the sim is pruning winners and you catch it.
 
 Everything downstream consumes exactly this. Build to it first, fill it in second.
 
@@ -32,9 +51,14 @@ Everything downstream consumes exactly this. Build to it first, fill it in secon
       "n_agents": 4000,
       "p_buy_control": 0.041,
       "p_buy_treatment": 0.059,
+      "rank_in_segment": 1,           // ordinal position — the PRIMARY output; magnitude is secondary
       "band_share": 0.22              // fraction of |tau| attributable to LLM modulation (band sensitivity)
     }
   ],
+  // the deliverable: a ranked shortlist per segment, not a single point prediction
+  "shortlist": { "by_segment": { "S3": { "topk": ["value_framing_LINE_-10pct",
+                                                  "value_framing_LINE_-5pct",
+                                                  "aspirational_Insta_-10pct"], "k": 3 } } },
   "predicted_winner": { "by_segment": { "S3": "value_framing_LINE_-10pct" } },
   "seed": 1234,
   "f_on_real_cohort": "ref://..."     // simulator scored on real targeted users' X (for PPI alignment)
@@ -244,6 +268,14 @@ Each lever is an injectable that writes one field of `w`:
 - `δ_raw(i)` is computed once per agent and cached, reused across all arms of the same
   `experiment_id`.
 
+**Wildcard arm (anti-pruning, §0/§9).** When the sim's ranking is handed to the live test,
+the activation layer must add one **wildcard**: a candidate the sim ranked *outside* top-k,
+sent to a real arm anyway. The sim is a pre-screener, and a pre-screener's silent failure
+is killing the true winner before it's ever tested. The wildcard is the only way to observe
+that failure — if it keeps beating the sim's picks, the ranking is pruning winners. Pick it
+deterministically from `seed` (e.g. highest-variance sim-rejected candidate, or a
+human-chosen contrarian) and label it so `eval` can compute wildcard recall.
+
 ---
 
 ## 7. Runtime adapter interface (push to MiroFish)
@@ -285,13 +317,25 @@ f_on_real_cohort    = run the same engine on the real targeted users' attr vecto
 
 ## 9. Validation & gates the sim must expose
 
-- **Backtest** (`eval/backtest.py`): replay held-out real campaigns through the engine →
-  Hit@1, sign-agreement, Spearman rank-corr, Qini. Decision-level, per §14.
-- **Calibration** (`eval/`): regress `τ_real = α + β·τ_sim`; report `β, R²`. **Gate the
-  pricing module on `β ∈ [0.8, 1.2]`** for that client — below it, the magnitude isn't
-  trustworthy and you ship direction-only.
+Ordered by what the product is sold on. **Ranking metrics are the headline; magnitude is
+an internal gate.** This ordering is the whole point of treating the sim as a pre-screener
+(§0): ranking is a lower bar that survives small samples, so it's both more defensible and
+more honest about what's actually doing the work.
+
+- **Ranking — the headline** (`eval/backtest.py`): replay held-out real campaigns →
+  **`Hit@k`** (is the real winner in the sim's top-k?), **`Recall@k`**, Spearman
+  **`RankCorr`**, sign-agreement, Qini. This is what you validate and what you sell. It
+  needs only ordinal signal, so it holds up at the sample sizes mid-market data gives you.
+- **Wildcard recall** (anti-pruning): track how often the live **wildcard arm** (a
+  sim-rejected candidate sent anyway, §6) beats the sim's top-k. A rising rate means the
+  sim is silently pruning real winners — the one failure pre-screening can hide.
+- **Calibration — internal gate only, never published** (`eval/`): regress
+  `τ_real = α + β·τ_sim`; report `β, R²`. **Gate the pricing module on `β ∈ [0.8, 1.2]`**
+  — below it the magnitude isn't trustworthy and you ship rank/direction-only. Magnitude
+  is a gate on *what you may claim*, not a headline number.
 - **PPI** (`eval/ppi.py`): combine `f_on_real_cohort` over all + bias-correct on the small
-  real anchor → `θ_PPI`, `EfficiencyGain`. The honest published-metric input.
+  real anchor → `θ_PPI`, `EfficiencyGain`. Used internally to tighten estimates; not the
+  client-facing claim now that ranking leads.
 - **Band sensitivity**: `band_share` per run, surfaced to the client.
 - **Tail/non-response checks**: validate hardest on non-response base rates and tail
   segments — synthetic respondents regress to typical answers and understate variance, so

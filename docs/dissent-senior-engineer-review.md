@@ -178,3 +178,38 @@ To be fair to the design — the dissent over-rotates in three places:
 5. **Before any of it, answer the §4 question in writing:** what decision does the sim
    change that a cheap direct LINE test wouldn't? If you can't answer it crisply, the
    architecture is premature no matter how good it is.
+
+---
+
+## Resolution — §4 answered, §8 narrowed (the pre-screener reframe)
+
+The §4 killer question now has a crisp answer, and it changes the verdict on §8.
+
+**§4 — what the sim does that the cheap test can't.** The cheap LINE test is neither cheap
+nor unlimited: a finite list powers only a *handful* of arms, a real price change costs
+margin/shelf/weeks (not "hours"), an unbuilt creative costs production, a micro-segment
+can't be powered live, and every losing arm burns yen + block-risk goodwill. So the live
+test can *confirm* 2–3 finalists; it cannot *explore* 40. **The sim is a combinatorial
+pre-screener: rank a space too large/slow/irreversible to test live, then spend the scarce
+real-test budget only on the top-k.** It also reaches counterfactuals with no cheap real
+equivalent at all (an unset price, an unproduced creative). That is a real asymmetry, and
+it's the justification §4 demanded.
+
+**§8 — the power objection survives only in narrowed form.** The wide-CI critique is an
+objection to validating *magnitude*. Pre-screening needs only *ranking* — "is the real
+winner in the sim's top-k" — and **ordinal signal survives far smaller samples than
+magnitude.** So the fatal-base-case framing of §8 over-reached: it applies to the
+calibrated-`τ` product, not the rank-a-shortlist product. What remains is a *smaller,
+testable* risk: that the sim's **rank ordering doesn't beat a naive baseline** ("pick last
+campaign's winner"). That you can settle on a few backtested held-out campaigns before any
+client promise — which is exactly the kind of cheap falsification this whole review asked
+for.
+
+**Net effect on the dissent.** Three of its strongest hits hold unchanged — abstract-late,
+MCP-is-the-wrong-send-layer, cut-the-LLM-from-`τ`. But "the sim is decoration PPI removes"
+(§4) and "power kills the headline" (§8) are answered by selling *ranking, not magnitude*:
+the LLM-free regression+uplift model produces the rank, PPI/β move to an internal pricing
+gate, and the published number becomes **rank-lift over the naive baseline**, not a
+calibrated `τ`. The build-by-hand-three-times prescription is unchanged — but now its
+success criterion is concrete: *does sim top-k recall beat the naive baseline on the held-out
+campaigns?* If yes, the platform has earned its first organ. If no, stop.

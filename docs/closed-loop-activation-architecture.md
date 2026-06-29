@@ -24,12 +24,19 @@ premature.
 - **For a validation product, don't run 70/30 toward the predicted winner.** That biases
   you toward confirming yourself and under-powers τ_real. Use a balanced split (or
   Thompson-with-an-exploration-floor) until the accuracy metric has earned trust.
-- **The published metric must be a slow, shrunk aggregate, not a live ticker.** Updating
-  a published number off every low-powered mid-market experiment is the fastest way to
-  ship a number that swings and a methodology you can't defend.
-- **Riskiest assumption:** mid-market LINE lists don't generate enough *conversion*
-  signal per experiment to validate sim at decision resolution. The self-validating
-  metric rests on statistical power you mostly don't have in one run. See §9.
+- **The sim is a pre-screener; sell it on ranking, not magnitude.** Its job is to rank a
+  candidate space too large/slow/risky to test live, so the scarce real-test budget hits
+  only the top-k. The headline metric is **`Hit@k` / `RankCorr`** (is the real winner in
+  the sim's shortlist?), *not* calibrated `τ`. Ordinal signal survives far smaller samples
+  than magnitude — which is what makes this validatable on mid-market data at all. Demote
+  calibration β to an internal gate; keep the published number a slow, shrunk aggregate.
+- **Always ship a wildcard arm.** A pre-screener's silent failure is killing the true
+  winner before it's tested — you only ever validate survivors. Send one sim-rejected
+  candidate to a real arm every experiment; if it keeps winning, the sim is pruning winners.
+- **Riskiest assumption (now narrower):** the power problem bites *magnitude* validation,
+  not *ranking*. The real residual risk is that the sim's **rank ordering** isn't better
+  than a naive baseline ("pick last campaign's winner") — if top-k recall doesn't beat
+  that, the pre-screen adds nothing. Validate rank-lift over the naive baseline first. See §9.
 
 ---
 
@@ -162,10 +169,12 @@ Fail any → `rejected` with reason, no side effect, incident logged.
 ### eval-mcp (compute, read-only on internal data)
 
 ```jsonc
-{ "name": "compute_decision_metrics",   // §14 decision-level
-  "input": { "experiment_id": "string" },
-  "output": { "hit_at_1": 0, "sign_acc": 0.0, "rank_corr": 0.0,
-              "calibration_beta": 0.0, "r2": 0.0, "mae": 0.0,
+{ "name": "compute_decision_metrics",   // §14 decision-level — RANKING is the headline
+  "input": { "experiment_id": "string", "k": 3 },
+  "output": { "hit_at_k": 0, "recall_at_k": 0.0, "rank_corr": 0.0, "sign_acc": 0.0,
+              "rank_lift_vs_baseline": 0.0,        // top-k recall minus naive baseline (the real go/no-go)
+              "wildcard_beat_rate": 0.0,           // how often the sim-rejected wildcard won (anti-pruning)
+              "calibration_beta": 0.0, "r2": 0.0, "mae": 0.0,   // magnitude = INTERNAL gate only
               "tau_real": [ { "variant": "v", "tau": 0.0, "ci95": [0,0] } ] } }
 
 { "name": "compute_ppi_lift",           // §14 PPI: sim over all + bias-correct on real subset
@@ -180,7 +189,8 @@ Fail any → `rejected` with reason, no side effect, incident logged.
 
 { "name": "refresh_accuracy_metric",    // rolling, shrunk aggregate across experiments
   "input": { "client_id": "string", "segment_id": "string" },
-  "output": { "metric": { "hit_at_1_ewma": 0.0, "rank_corr_ewma": 0.0,
+  "output": { "metric": { "hit_at_k_ewma": 0.0, "rank_corr_ewma": 0.0,
+                          "rank_lift_vs_baseline_ewma": 0.0,   // the published, defensible number
                           "efficiency_gain": 0.0, "ci95": [0,0], "n_experiments": 0 } } }
 ```
 
@@ -221,11 +231,11 @@ the interface; the client's stack is config, not code.
 ## 4. The self-test closed loop — data flow
 
 ```
-(1) SIM (synthetic plane)           τ_sim(v) per variant/segment, predicted winner
+(1) SIM (synthetic plane)           RANKED shortlist (top-k) per segment — pre-screen of a wide candidate space
         │ write proposal                experiments row: status=proposed
         ▼
-(2) ALLOCATION PLAN                  champion / challenger / control arms (BALANCED — see §8 pushback)
-        │                               control = real holdout, required for τ_real
+(2) ALLOCATION PLAN                  champion=top-1 / challenger=top-2 / control=BAU / WILDCARD=sim-rejected
+        │                               control = real holdout (τ_real); wildcard = catch silent pruning. BALANCED.
         ▼
 (3) HUMAN APPROVAL GATE  ◄── Temporal signal ── dashboard. status=approved + budget cap + auto-rollback consent
         │
@@ -236,9 +246,8 @@ the interface; the client's stack is config, not code.
 (5) OBSERVE                          telemetry-mcp polls delivery/clicks/conversions on Temporal timer
         │                               until window closes AND min-power reached (sequential, always-valid CI)
         ▼
-(6) EVAL                             τ_real per arm → Hit@1, SignAcc, RankCorr, β, MAE
-        │                               then PPI: θ_PPI over full synthetic pop + bias-correct on tested subset
-        │                               EfficiencyGain, NormAcc
+(6) EVAL                             τ_real per arm → HEADLINE: Hit@k, RankCorr, rank-lift-vs-baseline, wildcard-beat-rate
+        │                               INTERNAL gate: β, MAE (magnitude). PPI θ_PPI for the pricing depth story only.
         ▼
 (7) RECALIBRATE (proposed)           Bayesian shrink segment_params toward observed → new version (provenance link)
         │                               auto-apply ONLY if calibration gate passes + HITL ok (early pilots: never)
@@ -272,7 +281,10 @@ def experiment_loop(client_id, segment_id, sim_run):
 
     # 2. allocate — BALANCED for validation, not 70/30 (see §8)
     plan = allocate(exp, scheme="balanced_with_control",
-                    arms={"champion": pick.winner, "challenger": pick.runner_up, "control": "BAU"})
+                    arms={"champion": sim.shortlist[0],      # sim's top-k drives the arms
+                          "challenger": sim.shortlist[1],
+                          "control": "BAU",
+                          "wildcard": pick_wildcard(sim)})   # a sim-REJECTED candidate, to catch pruning
     if lift_ci_includes_zero(sim, pick.winner):   # don't message if you can't predict a positive effect
         return abort(exp, "predicted lift CI includes 0 — not worth a real send")
 
@@ -301,7 +313,7 @@ def experiment_loop(client_id, segment_id, sim_run):
             if note.model_wrong: rollback(exp, "sim/real divergence"); freeze_recalibration(segment_id); raise Halt
 
     # 6. eval
-    m   = eval.compute_decision_metrics(exp.id)              # Hit@1, sign, rankcorr, β, MAE, τ_real
+    m   = eval.compute_decision_metrics(exp.id, k=3)         # headline: Hit@k, rankcorr, rank-lift, wildcard-beat; β/MAE internal
     ppi = eval.compute_ppi_lift(exp.id)                      # θ_PPI, EfficiencyGain, NormAcc
 
     # 7. recalibrate — PROPOSED, not auto-applied in early pilots
@@ -402,6 +414,16 @@ which is the whole pitch).
 
 ## 9. What in the premise is wrong or premature
 
+> **Reframe that resolves half of this section: the sim is a pre-screener, judged on
+> ranking.** The original premise reads as "predict the magnitude of lift, then validate
+> the magnitude." If instead the sim's job is to *rank* a large candidate space so the
+> live test only confirms the top-k, the bar drops from calibrated `τ` to "real winner in
+> the top-k" — an ordinal claim that survives the small samples mid-market gives you.
+> Magnitude becomes an internal gate (does pricing get to claim depth?), not the headline.
+> This directly weakens the power objection below (it bit magnitude, not ranking) and the
+> published-metric danger (you publish `Hit@k`/`RankCorr`, not a swinging `τ`). The points
+> that remain — allocation, recalibration, the holdout, the wildcard — still stand.
+
 1. **"Continuously updates the published accuracy metric" off live sends — statistically
    dangerous.** Mid-market experiments are low-powered (tens of thousands of recipients,
    single-digit % conversion, few variants). A *published* number that moves on every
@@ -423,16 +445,17 @@ which is the whole pitch).
    path; ship the pilot on LINE-direct (or whichever stack the client already runs) and
    treat Lステップ as an adapter you harden after the first deal.
 
-**Riskiest assumption (the one to test first):** that mid-market LINE campaigns produce
-enough *conversion* signal per experiment to validate sim predictions at decision
-resolution. With small lists and low conversion rates, a single experiment's τ_real has
-wide CIs — you may not distinguish Hit@1 from chance in one run. The self-validating
-metric rests on power you mostly don't have. *Mitigations:* lean on PPI to borrow power
-from sim, pool hierarchically across experiments/segments, validate first on
-high-frequency proxy events (delivery→open→click) before conversions, and set expectations
-that the metric **matures over many experiments**, not one. If this assumption fails, the
-"continuously self-validating accuracy" story doesn't hold and you fall back to
-sim-as-decision-aid with periodic batch validation.
+**Riskiest assumption (restated for the pre-screener framing):** *not* that the sim
+predicts magnitude accurately — that bar is dropped. The risk that remains is that the
+sim's **rank ordering doesn't beat a naive baseline** ("always discount", "pick last
+campaign's winner"). If the sim's top-k recall is no better than that baseline, the
+pre-screen adds nothing and the whole loop is ceremony around a coin flip. This is more
+testable than the old magnitude claim: ranking holds up at small samples, so you can settle
+it on a few held-out campaigns. *Mitigations:* validate **rank-lift over the naive
+baseline** first (the real go/no-go); use the **wildcard arm** to catch the sim silently
+pruning winners; keep PPI/hierarchical pooling for the magnitude story you tell *internally*
+about pricing, not the headline. If even the ranking fails to beat the baseline, you don't
+have a product — and you'll have found out cheaply, on backtest, before any client promise.
 
 ---
 
