@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "segment_id": "seg_001",
+  "segment_name": "アクティブユーザー",
+  "population_size": 15000,
+  "distributions": {
+    "age_band": {
+      "18-24": 0.15,
+      "25-34": 0.30,
+      "35-44": 0.25,
+      "45-54": 0.15,
+      "55-64": 0.10,
+      "65+": 0.05
+    },
+    "gender": {
+      "male": 0.45,
+      "female": 0.50,
+      "unknown": 0.05
+    },
+    "days_since_friend_add": {
+      "distribution": "lognormal",
+      "mean": 4.5,
+      "sigma": 1.2
+    },
+    "past_open_rate": {
+      "distribution": "beta",
+      "alpha": 2.0,
+      "beta": 5.0
+    },
+    "past_click_rate": {
+      "distribution": "beta",
+      "alpha": 1.5,
+      "beta": 8.0
+    },
+    "engagement_level": {
+      "high": 0.20,
+      "medium": 0.35,
+      "low": 0.30,
+      "dormant": 0.15
+    }
+  }
+}
