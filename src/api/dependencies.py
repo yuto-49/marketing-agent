@@ -4,7 +4,11 @@ Separated from main.py to avoid circular imports between the app
 module and its routers.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generator
+
+from sqlalchemy.orm import Session
+
+from src.db.database import get_session
 
 if TYPE_CHECKING:
     from src.explainability.shap_explainer import ShapExplainer
@@ -18,7 +22,6 @@ def init_state(engine: "SimulationEngine", explainer: "ShapExplainer") -> None:
     """Called once by the lifespan handler to populate shared state."""
     _state["engine"] = engine
     _state["explainer"] = explainer
-    _state["results"] = {}
 
 
 def clear_state() -> None:
@@ -36,6 +39,10 @@ def get_explainer() -> "ShapExplainer":
     return _state["explainer"]
 
 
-def get_results_store() -> dict:
-    """Return the in-memory results store (simulation_id -> result)."""
-    return _state["results"]
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency that yields a DB session and closes it after."""
+    db = get_session()
+    try:
+        yield db
+    finally:
+        db.close()

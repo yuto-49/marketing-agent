@@ -2,35 +2,34 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from src.simulation.schemas import SimulationResult, SimulationStatus
+from src.db import repository as repo
+from src.simulation.schemas import SimulationResult
 
-from ..dependencies import get_results_store
+from ..dependencies import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def _require_completed_result(simulation_id: str) -> SimulationResult:
-    """Look up a simulation and ensure it is completed."""
-    store = get_results_store()
-    entry = store.get(simulation_id)
+def _require_completed_result(simulation_id: str, db: Session) -> SimulationResult:
+    """Look up a simulation from DB and ensure it is completed."""
+    record = repo.get_simulation(db, simulation_id)
 
-    if entry is None:
+    if record is None:
         raise HTTPException(status_code=404, detail=f"Simulation '{simulation_id}' not found")
 
-    if isinstance(entry, dict):
-        status = entry.get("status", "unknown")
-        if status == SimulationStatus.RUNNING.value:
-            raise HTTPException(status_code=409, detail="Simulation is still running")
+    if record.status == "running":
+        raise HTTPException(status_code=409, detail="Simulation is still running")
+    if record.status == "failed":
         raise HTTPException(status_code=500, detail="Simulation failed")
+    if not record.result_json:
+        raise HTTPException(status_code=500, detail="No result data available")
 
-    if not isinstance(entry, SimulationResult):
-        raise HTTPException(status_code=500, detail="Unexpected result type in store")
-
-    return entry
+    return SimulationResult.model_validate_json(record.result_json)
 
 
 def _build_confidence_statement_ja(tau_sim: float, ci_lower: float, ci_upper: float) -> str:
@@ -49,7 +48,7 @@ def _build_confidence_statement_ja(tau_sim: float, ci_lower: float, ci_upper: fl
 
 
 @router.get("/{simulation_id}/compare")
-async def compare_variants(simulation_id: str) -> dict:
+async def compare_variants(simulation_id: str, db: Session = Depends(get_db)) -> dict:
     """Return structured comparison data for side-by-side variant analysis.
 
     Structure::
@@ -73,7 +72,7 @@ async def compare_variants(simulation_id: str) -> dict:
             ]
         }
     """
-    result = _require_completed_result(simulation_id)
+    result = _require_completed_result(simulation_id, db)
 
     # Find the control variant's funnel rates for delta calculation.
     control_rates: dict[str, float] = {}

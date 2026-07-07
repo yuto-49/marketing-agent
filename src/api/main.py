@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.db.database import init_db
+
 from .dependencies import clear_state, init_state
 from .routers import comparison, explanation, simulation
 
@@ -23,6 +25,7 @@ async def lifespan(app: FastAPI):
     engine = SimulationEngine(params_dir=params_dir)
     explainer = ShapExplainer(engine.response_model)
 
+    init_db()
     init_state(engine, explainer)
 
     logger.info("Simulation engine initialised (params_dir=%s)", params_dir)
