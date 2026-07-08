@@ -3,6 +3,7 @@
 Tables:
   - simulations: stores simulation metadata + full JSON result
   - segment_params_versions: versioned segment parameter snapshots
+  - campaigns: LINE campaign sends linked to simulations
 """
 
 from datetime import datetime, timezone
@@ -52,3 +53,25 @@ class SegmentParamsVersion(Base):
         String(50), nullable=False, default="initial"
     )
     tau_real_mean: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class CampaignRecord(Base):
+    """LINE campaign send linked to a simulation."""
+
+    __tablename__ = "campaigns"
+
+    campaign_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    simulation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    segment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    variant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc)
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    audience_group_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    recipient_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    send_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stats_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

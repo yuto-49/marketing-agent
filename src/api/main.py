@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.db.database import init_db
 
 from .dependencies import clear_state, init_state
-from .routers import comparison, evaluation, explanation, simulation
+from .routers import campaigns, comparison, evaluation, explanation, simulation
 
 logger = logging.getLogger(__name__)
 
@@ -53,5 +53,6 @@ app.include_router(simulation.router, prefix="/api/simulations", tags=["simulati
 app.include_router(explanation.router, prefix="/api/simulations", tags=["explanation"])
 app.include_router(comparison.router, prefix="/api/simulations", tags=["comparison"])
 app.include_router(evaluation.router, prefix="/api", tags=["evaluation"])
+app.include_router(campaigns.router, prefix="/api/campaigns", tags=["campaigns"])
 
 
